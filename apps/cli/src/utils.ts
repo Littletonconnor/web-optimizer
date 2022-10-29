@@ -41,14 +41,16 @@ export function isAssetSupported(filename: string) {
 }
 
 export function pluck(options: Record<string, unknown>, ...flags: string[]) {
-  return flags.reduce(
-    (acc: Record<string, unknown>, flag) => {
-      if (options[flag]) {
-        acc[flag] = options[flag];
-      }
+  const initialState: Record<string, unknown> = {
+    output: options.output,
+    backup: !options.output,
+  };
 
-      return acc;
-    },
-    { output: options.output }
-  );
+  return flags.reduce((acc: Record<string, unknown>, flag) => {
+    if (options[flag]) {
+      acc[flag] = options[flag];
+    }
+
+    return acc;
+  }, initialState);
 }

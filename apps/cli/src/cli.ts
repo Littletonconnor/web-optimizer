@@ -66,20 +66,16 @@ export async function runCli() {
       "What Constant Rate Factor you would like to use for your video.",
       "23"
     )
+    .addHelpText("after", "\nExamples: TODO")
     .parse(process.argv);
 
   const options = program.opts();
-  const args = program.args;
-  console.log("options", options);
-  console.log("args", args);
 
   const assets = await parseAssets(program.args);
-  console.log("assets", assets);
 
   // now that we have the assets parsed we need to check that all the required flags are set with those assets
   // throw warnings for default values
   const flags = await parseFlags(options);
-  console.log("FLAGS", flags);
 
   if (flags.image) {
     optimizeImages(assets.image, flags.image);
@@ -123,7 +119,9 @@ export async function parseAssets(filenames: string[]) {
 
 export async function parseFlags(options: Record<string, unknown>) {
   if (!options.output) {
-    logger.info("No output directory specified, using current directory.");
+    logger.info(
+      "[web-optimizer] No output directory specified, using current directory and creating backups."
+    );
   }
 
   return {
@@ -154,9 +152,9 @@ export async function getImageFlags(options: Record<string, unknown>) {
     imageFlags.sizes = DEVICE_SIZES;
   } else if (!options.format) {
     logger.info(
-      '[web-optimizer] No format flag set, using default value of "jpeg".'
+      '[web-optimizer] No format flag set, using default value of "jpg".'
     );
-    imageFlags.format = "jpeg";
+    imageFlags.format = "jpg";
   }
 
   // TODO: error logging
@@ -183,7 +181,26 @@ export async function optimizeImages(
 ) {
   for (const filename of filenames) {
     const transformer = await getTransformer(filename);
-    addBackup(filename);
+    if (flags.backup) {
+      addBackup(filename);
+    }
+
+    // optimize the original images while adding .bak files if needed.
+    const transformerClone = transformer.clone();
+
+    const outputPath = path.join(
+      (flags.output as string) || path.dirname(filename),
+      `${path.basename(filename, path.extname(filename))}${path.extname(
+        filename
+      )}`
+    );
+    (transformerClone as any)[flags.format as string]({
+      quality: Number(flags.quality),
+    });
+
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+
+    transformerClone.toFile(outputPath);
 
     if (flags.descriptor === "w") {
       for (const width of DEVICE_SIZES) {
@@ -197,14 +214,12 @@ export async function optimizeImages(
           });
 
           const outputPath = path.join(
-            flags.output as string,
+            (flags.output as string) || path.dirname(filename),
             `${path.basename(
               filename,
               path.extname(filename)
             )}-${width}w${path.extname(filename)}`
           );
-
-          await fs.mkdir(path.dirname(outputPath), { recursive: true });
 
           transformerClone.toFile(outputPath);
         }
