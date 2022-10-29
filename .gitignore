@@ -5,6 +5,9 @@ node_modules
 .pnp
 .pnp.js
 
+# prod
+apps/cli/dist
+
 # testing
 coverage
 
