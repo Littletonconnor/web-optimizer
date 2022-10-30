@@ -12,14 +12,15 @@ import {
   renderTitle,
 } from "./utils";
 
-const defaultOptions = {
-  asset: "image",
-  flags: {
-    image: false,
-    svg: false,
-    video: false,
-  },
-};
+export interface CliOptions {
+  output: string;
+  format: string;
+  descriptor: string;
+  sizes: string[];
+  quality: string;
+  jsx: boolean;
+  crf: string;
+}
 
 async function getTransformer(filename: string) {
   const imageBuffer = await fs.readFile(filename);
@@ -27,17 +28,15 @@ async function getTransformer(filename: string) {
 }
 
 export async function runCli() {
-  const cliResults = defaultOptions;
-
-  const program = new Command().name(renderTitle(false));
+  const program = new Command().name(renderTitle());
 
   program
     .description("A CLI for optimizing web assets")
     .argument("[asset]", "A space separated list of assets to optimize")
     .option("-o, --output <type>", "Directory to write the asset files to.")
-    .option("-f, --format <type>", "Force output to a given format.")
+    .option("-f, --format <type>", "Force output to a given format.", "png")
     .option(
-      "-s, --sizes <type>",
+      "-s, --sizes <numbers...>",
       "What width you would like to resize your image to.",
       DEVICE_SIZES
     )
@@ -52,11 +51,6 @@ export async function runCli() {
       "75"
     )
     .option(
-      "-b, --backup <type>",
-      "If you want to create a backup file of the original asset (.bak). If false, the original file will be overwritten.",
-      true
-    )
-    .option(
       "    --jsx <boolean>",
       "Whether to output JSX or optimize the svg.",
       false
@@ -69,7 +63,8 @@ export async function runCli() {
     .addHelpText("after", "\nExamples: TODO")
     .parse(process.argv);
 
-  const options = program.opts();
+  const options: CliOptions = program.opts();
+  console.log("options", options);
 
   const assets = await parseAssets(program.args);
 
@@ -117,13 +112,7 @@ export async function parseAssets(filenames: string[]) {
   return assets;
 }
 
-export async function parseFlags(options: Record<string, unknown>) {
-  if (!options.output) {
-    logger.info(
-      "[web-optimizer] No output directory specified, using current directory and creating backups."
-    );
-  }
-
+export async function parseFlags(options: CliOptions) {
   return {
     image: await getImageFlags(options),
     svg: await getSvgFlags(options),
@@ -131,33 +120,18 @@ export async function parseFlags(options: Record<string, unknown>) {
   };
 }
 
-export async function getImageFlags(options: Record<string, unknown>) {
+export async function getImageFlags(options: CliOptions) {
   const imageFlags: Record<string, unknown> = {};
 
-  // info logging
-  if (!options.quality) {
-    logger.info(
-      "[web-optimizer] No quality flag set, using default value of 75."
+  if (Number(options.quality) < 0 || Number(options.quality) > 100) {
+    logger.error("[web-optimizer] Quality must be between 0 and 100.");
+  } else if (options.descriptor !== "x" && options.descriptor !== "w") {
+    logger.error('[web-optimizer] Descriptor must be either "x" or "w".');
+  } else if (invalidSizes(options.sizes)) {
+    logger.error(
+      "[web-optimizer] sizes must be a space separated list of numbers."
     );
-    imageFlags.quality = 75;
-  } else if (!options.descriptor) {
-    logger.info(
-      "[web-optimizer] No descriptor flag set, using pixel density descriptor."
-    );
-    imageFlags.descriptor = "w";
-  } else if (!options.sizes) {
-    logger.info(
-      `[web-optimizer] No sizes flag set, using default value of ${DEVICE_SIZES}.`
-    );
-    imageFlags.sizes = DEVICE_SIZES;
-  } else if (!options.format) {
-    logger.info(
-      '[web-optimizer] No format flag set, using default value of "jpg".'
-    );
-    imageFlags.format = "jpg";
   }
-
-  // TODO: error logging
 
   return {
     ...imageFlags,
@@ -165,67 +139,100 @@ export async function getImageFlags(options: Record<string, unknown>) {
   };
 }
 
-export async function getSvgFlags(options: Record<string, unknown>) {
+export async function getSvgFlags(options: CliOptions) {
   // TODO: info logging
   // TODO: error logging
 }
 
-export async function getVideoFlags(options: Record<string, unknown>) {
+export async function getVideoFlags(options: CliOptions) {
   // TODO: info logging
   // TODO: error logging
 }
 
-export async function optimizeImages(
-  filenames: string[],
-  flags: Record<string, unknown>
-) {
+export async function optimizeImages(filenames: string[], flags: CliOptions) {
   for (const filename of filenames) {
     const transformer = await getTransformer(filename);
-    if (flags.backup) {
+    if (!flags.output && flags.format === getFileExtension(filename)) {
+      logger.info(
+        "[web-optimizer] No output directory specified, using current directory and creating backups."
+      );
       addBackup(filename);
     }
 
-    // optimize the original images while adding .bak files if needed.
-    const transformerClone = transformer.clone();
-
     const outputPath = path.join(
       (flags.output as string) || path.dirname(filename),
-      `${path.basename(filename, path.extname(filename))}${path.extname(
-        filename
-      )}`
+      `${path.basename(filename, path.extname(filename))}.${flags.format}`
     );
-    (transformerClone as any)[flags.format as string]({
-      quality: Number(flags.quality),
-    });
+
+    const transformerClone = transformer.clone();
+
+    transformToFormat(transformerClone, flags.format, flags.quality);
 
     await fs.mkdir(path.dirname(outputPath), { recursive: true });
 
     transformerClone.toFile(outputPath);
 
     if (flags.descriptor === "w") {
-      for (const width of DEVICE_SIZES) {
+      for (const width of flags.sizes) {
         const transformerClone = transformer.clone();
         const { width: metaWidth } = await transformerClone.metadata();
 
         if (metaWidth && metaWidth > Number(width)) {
           transformerClone.resize(Number(width));
-          (transformerClone as any)[flags.format as string]({
-            quality: Number(flags.quality),
-          });
+          transformToFormat(transformerClone, flags.format, flags.quality);
 
           const outputPath = path.join(
             (flags.output as string) || path.dirname(filename),
-            `${path.basename(
-              filename,
-              path.extname(filename)
-            )}-${width}w${path.extname(filename)}`
+            `${path.basename(filename, path.extname(filename))}-${width}w.${
+              flags.format
+            }`
           );
 
           transformerClone.toFile(outputPath);
         }
       }
+    } else if (flags.descriptor === "x") {
+      const transformerClone = transformer.clone();
+      const { width, height } = await transformerClone.metadata();
+
+      if (width && height) {
+        transformerClone.resize(width * 2, height * 2);
+        transformToFormat(transformerClone, flags.format, flags.quality);
+
+        const outputPath = path.join(
+          (flags.output as string) || path.dirname(filename),
+          `${path.basename(filename, path.extname(filename))}@2x.${
+            flags.format
+          }`
+        );
+
+        transformerClone.toFile(outputPath);
+      }
     }
   }
+}
+
+function invalidSizes(sizes: string[]) {
+  sizes.forEach((size) => {
+    if (isNaN(Number(size))) {
+      return true;
+    }
+  });
+
+  return false;
+}
+
+function transformToFormat(
+  transformer: any,
+  format: unknown,
+  quality: unknown
+) {
+  const _format = format === "jpg" ? "jpeg" : (format as string);
+  const _quality = Number(quality) as number;
+
+  return transformer[_format]({
+    quality: _quality,
+  });
 }
 
 function addBackup(filename: string) {

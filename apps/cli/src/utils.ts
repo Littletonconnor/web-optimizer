@@ -2,18 +2,16 @@ import { promises as fs, constants } from "fs";
 import figlet from "figlet";
 import { gradient, TITLE, ASSETS } from "./constants";
 import { logger } from "./logger";
+import { CliOptions } from "./cli";
 
 type AssetType = keyof typeof ASSETS;
 type Asset = typeof ASSETS[AssetType][number];
 
-export function renderTitle(log = true) {
+export function renderTitle() {
   const title = gradient.multiline(figlet.textSync(TITLE, {}));
-  if (log) {
-    console.log(title);
-  }
-
   return `\n${title}\n`;
 }
+
 export function isAsset(ext: string): ext is Asset {
   return (
     Object.values(ASSETS)
@@ -40,13 +38,12 @@ export function isAssetSupported(filename: string) {
   return true;
 }
 
-export function pluck(options: Record<string, unknown>, ...flags: string[]) {
-  const initialState: Record<string, unknown> = {
+export function pluck(options: CliOptions, ...flags: (keyof CliOptions)[]) {
+  const initialState: Partial<CliOptions> = {
     output: options.output,
-    backup: !options.output,
   };
 
-  return flags.reduce((acc: Record<string, unknown>, flag) => {
+  return flags.reduce((acc: any, flag) => {
     if (options[flag]) {
       acc[flag] = options[flag];
     }
