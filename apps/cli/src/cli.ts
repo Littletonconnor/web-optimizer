@@ -64,13 +64,9 @@ export async function runCli() {
     .parse(process.argv);
 
   const options: CliOptions = program.opts();
-  console.log("options", options);
 
   const assets = await parseAssets(program.args);
   const flags = await parseFlags(options);
-
-  console.log("assets", assets);
-  console.log("flags", flags);
 
   if (assets.image.length > 0) {
     optimizeImages(assets.image, flags.image);
@@ -239,28 +235,35 @@ async function optimizeImages(filenames: string[], flags: CliOptions) {
 // TODO: (maybe) add jsxOutput flag?
 async function optimizeSvgs(filenames: string[], flags: CliOptions) {
   for (const filename of filenames) {
-    console.log("filename", filename);
     const svgString = await fs.readFile(filename, "utf8");
     const { data } = optimize(svgString, { multipass: true });
-    const parsedPath = path.parse(filename);
     const outputPath = path.join(
-      parsedPath.dir,
-      `${parsedPath.name}.optimized${parsedPath.ext}`
+      flags.output || path.dirname(filename),
+      `${path.basename(
+        filename,
+        path.extname(filename)
+      )}.optimized${path.extname(filename)}`
     );
     await fs.mkdir(path.dirname(outputPath), { recursive: true });
     await fs.writeFile(outputPath, data);
 
     if (flags.jsx) {
-      const componentName = capitalize(camelCase(path.basename(filename)));
-
+      const componentName = capitalize(
+        camelCase(path.basename(filename, ".svg"))
+      );
+      const svgString = await fs.readFile(filename, "utf8");
       const jsx = await transform(
-        data,
+        svgString,
         {
-          plugins: [],
+          plugins: [
+            "@svgr/plugin-svgo",
+            "@svgr/plugin-jsx",
+            "@svgr/plugin-prettier",
+          ],
+          svgo: true,
           icon: false,
           // TODO: (maybe) optionally make this js or ts
           typescript: true,
-          svgo: true,
           template: (variables, context) => {
             return context.tpl`
               ${variables.imports};
@@ -280,9 +283,11 @@ async function optimizeSvgs(filenames: string[], flags: CliOptions) {
         { componentName }
       );
 
-      const outputPath = path.join(parsedPath.dir, `${parsedPath.name}.tsx`);
-      await fs.mkdir(path.dirname(outputPath), { recursive: true });
-      await fs.writeFile(outputPath, jsx);
+      const jsxOutputPath = path.join(
+        flags.output || path.dirname(filename),
+        `${path.basename(filename, path.extname(filename))}.tsx`
+      );
+      await fs.writeFile(jsxOutputPath, jsx);
     }
   }
 }
