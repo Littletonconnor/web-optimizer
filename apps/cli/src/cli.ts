@@ -70,7 +70,8 @@ export async function runCli() {
 
   if (assets.image.length > 0) {
     optimizeImages(assets.image, flags.image);
-  } else if (assets.svg.length > 0) {
+  }
+  if (assets.svg.length > 0) {
     optimizeSvgs(assets.svg, flags.svg);
   }
 }
