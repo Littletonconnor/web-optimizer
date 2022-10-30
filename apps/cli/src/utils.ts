@@ -51,3 +51,11 @@ export function pluck(options: CliOptions, ...flags: (keyof CliOptions)[]) {
     return acc;
   }, initialState);
 }
+
+export function capitalize(filename: string) {
+  return filename.charAt(0).toUpperCase() + filename.slice(1);
+}
+
+export function camelCase(filename: string) {
+  return filename.replace(/-([a-z])/g, (g) => g[1].toUpperCase());
+}

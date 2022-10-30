@@ -1,11 +1,15 @@
 import { Command } from "commander";
+import { transform } from "@svgr/core";
 import execa from "execa";
 import { constants, promises as fs } from "fs";
 import path from "path";
 import sharp from "sharp";
 import { ASSETS, DEVICE_SIZES } from "./constants";
 import { logger } from "./logger";
+import { optimize } from "svgo";
 import {
+  camelCase,
+  capitalize,
   getFileExtension,
   isAssetSupported,
   pluck,
@@ -50,11 +54,7 @@ export async function runCli() {
       "What quality you would like to use for your image.",
       "75"
     )
-    .option(
-      "    --jsx <boolean>",
-      "Whether to output JSX or optimize the svg.",
-      false
-    )
+    .option("    --jsx", "Whether to output JSX or optimize the svg.", false)
     .option(
       "    --crf <type>",
       "What Constant Rate Factor you would like to use for your video.",
@@ -67,13 +67,15 @@ export async function runCli() {
   console.log("options", options);
 
   const assets = await parseAssets(program.args);
-
-  // now that we have the assets parsed we need to check that all the required flags are set with those assets
-  // throw warnings for default values
   const flags = await parseFlags(options);
 
-  if (flags.image) {
+  console.log("assets", assets);
+  console.log("flags", flags);
+
+  if (assets.image.length > 0) {
     optimizeImages(assets.image, flags.image);
+  } else if (assets.svg.length > 0) {
+    optimizeSvgs(assets.svg, flags.svg);
   }
 }
 
@@ -114,15 +116,13 @@ export async function parseAssets(filenames: string[]) {
 
 export async function parseFlags(options: CliOptions) {
   return {
-    image: await getImageFlags(options),
-    svg: await getSvgFlags(options),
-    video: await getVideoFlags(options),
+    image: getImageFlags(options),
+    svg: getSvgFlags(options),
+    video: getVideoFlags(options),
   };
 }
 
-export async function getImageFlags(options: CliOptions) {
-  const imageFlags: Record<string, unknown> = {};
-
+function getImageFlags(options: CliOptions) {
   if (Number(options.quality) < 0 || Number(options.quality) > 100) {
     logger.error("[web-optimizer] Quality must be between 0 and 100.");
   } else if (options.descriptor !== "x" && options.descriptor !== "w") {
@@ -133,23 +133,47 @@ export async function getImageFlags(options: CliOptions) {
     );
   }
 
-  return {
-    ...imageFlags,
-    ...pluck(options, "quality", "descriptor", "sizes", "format"),
-  };
+  return pluck(options, "quality", "descriptor", "sizes", "format");
 }
 
-export async function getSvgFlags(options: CliOptions) {
-  // TODO: info logging
-  // TODO: error logging
+function getSvgFlags(options: CliOptions) {
+  return pluck(options, "jsx");
 }
 
-export async function getVideoFlags(options: CliOptions) {
-  // TODO: info logging
-  // TODO: error logging
+function getVideoFlags(options: CliOptions) {}
+
+function invalidSizes(sizes: string[]) {
+  sizes.forEach((size) => {
+    if (isNaN(Number(size))) {
+      return true;
+    }
+  });
+
+  return false;
 }
 
-export async function optimizeImages(filenames: string[], flags: CliOptions) {
+function transformToFormat(
+  transformer: any,
+  format: unknown,
+  quality: unknown
+) {
+  const _format = format === "jpg" ? "jpeg" : (format as string);
+  const _quality = Number(quality) as number;
+
+  return transformer[_format]({
+    quality: _quality,
+  });
+}
+
+function addBackup(filename: string) {
+  const parsedPath = path.parse(filename);
+  execa("cp", [
+    filename,
+    `${parsedPath.dir}/${parsedPath.name}.bak${parsedPath.ext}`,
+  ]);
+}
+
+async function optimizeImages(filenames: string[], flags: CliOptions) {
   for (const filename of filenames) {
     const transformer = await getTransformer(filename);
     if (!flags.output && flags.format === getFileExtension(filename)) {
@@ -212,33 +236,53 @@ export async function optimizeImages(filenames: string[], flags: CliOptions) {
   }
 }
 
-function invalidSizes(sizes: string[]) {
-  sizes.forEach((size) => {
-    if (isNaN(Number(size))) {
-      return true;
+// TODO: (maybe) add jsxOutput flag?
+async function optimizeSvgs(filenames: string[], flags: CliOptions) {
+  for (const filename of filenames) {
+    console.log("filename", filename);
+    const svgString = await fs.readFile(filename, "utf8");
+    const { data } = optimize(svgString, { multipass: true });
+    const parsedPath = path.parse(filename);
+    const outputPath = path.join(
+      parsedPath.dir,
+      `${parsedPath.name}.optimized${parsedPath.ext}`
+    );
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    await fs.writeFile(outputPath, data);
+
+    if (flags.jsx) {
+      const componentName = capitalize(camelCase(path.basename(filename)));
+
+      const jsx = await transform(
+        data,
+        {
+          plugins: [],
+          icon: false,
+          // TODO: (maybe) optionally make this js or ts
+          typescript: true,
+          svgo: true,
+          template: (variables, context) => {
+            return context.tpl`
+              ${variables.imports};
+
+              ${variables.interfaces};
+
+              function ${variables.componentName}(${variables.props}: Props): JSX.Element {
+                return (
+                  ${variables.jsx}
+                )
+              };
+
+              ${variables.exports};
+            `;
+          },
+        },
+        { componentName }
+      );
+
+      const outputPath = path.join(parsedPath.dir, `${parsedPath.name}.tsx`);
+      await fs.mkdir(path.dirname(outputPath), { recursive: true });
+      await fs.writeFile(outputPath, jsx);
     }
-  });
-
-  return false;
-}
-
-function transformToFormat(
-  transformer: any,
-  format: unknown,
-  quality: unknown
-) {
-  const _format = format === "jpg" ? "jpeg" : (format as string);
-  const _quality = Number(quality) as number;
-
-  return transformer[_format]({
-    quality: _quality,
-  });
-}
-
-function addBackup(filename: string) {
-  const parsedPath = path.parse(filename);
-  execa("cp", [
-    filename,
-    `${parsedPath.dir}/${parsedPath.name}.bak${parsedPath.ext}`,
-  ]);
+  }
 }
