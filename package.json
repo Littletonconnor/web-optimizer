@@ -7,7 +7,8 @@
     "packages/*"
   ],
   "scripts": {
-    "cli:dev": "turbo --filter=cli dev --watch",
+    "cli:build": "turbo --filter=web-optimizer build",
+    "build": "turbo build",
     "dev": "turbo run dev --parallel",
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\""
